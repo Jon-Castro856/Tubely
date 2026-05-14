@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -68,6 +69,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	_, err = rand.Read(rng)
 	rngString := base64.RawURLEncoding.EncodeToString(rng)
 
+	//initial temp file creation
 	file, err := os.CreateTemp("", "tubely-upload.mp4")
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Unable to create tmp file", err)
@@ -76,11 +78,31 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	defer os.Remove("tubely-upload.mp4")
 	defer file.Close()
 
+	_, err = io.Copy(file, fileData)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Unable to copy tmp file", err)
+		return
+	}
+
 	orientation, err := getVideoAspectRatio(file.Name())
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error fetching video aspect ratio", err)
 		return
 	}
+
+	newFilePath, err := processVideoForFastStart(file.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error Pre-processing video", err)
+		return
+	}
+
+	//new temp file for processed faststart video
+	processedFile, err := os.Open(newFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error opening tmp file", err)
+	}
+	defer os.Remove(newFilePath)
+	defer processedFile.Close()
 
 	_, err = io.Copy(file, fileData)
 	if err != nil {
@@ -96,8 +118,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	bucketParams := s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
-		Key:         aws.String(rngString + ".mp4"),
-		Body:        file,
+		Key:         aws.String(orientation + "/" + rngString + ".mp4"),
+		Body:        processedFile,
 		ContentType: &contentType,
 	}
 	_, err = cfg.client.PutObject(r.Context(), &bucketParams)
@@ -107,6 +129,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	video.VideoURL = aws.String("https://" + cfg.s3Bucket + ".s3." + cfg.s3Region + ".amazonaws.com/" + orientation + "/" + rngString + ".mp4")
+	fmt.Printf("Video url is now:\n %s", *video.VideoURL)
 	cfg.db.UpdateVideo(video)
 
 }
