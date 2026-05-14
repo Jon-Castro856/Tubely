@@ -1,9 +1,15 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -43,13 +49,36 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	fileData, fileHeader, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "No data found in header", err)
+		return
 	}
 
-	contentType := fileHeader.Header.Get("Content-Type")
-
-	imageData, err := io.ReadAll(fileData)
+	contentType, _, err := mime.ParseMediaType(fileHeader.Header.Get("Content-Type"))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Unable to read data", err)
+		respondWithError(w, http.StatusBadRequest, "Error acquiring content type", err)
+		return
+	}
+	if contentType != "image/png" && contentType != "image/jpeg" {
+		respondWithError(w, http.StatusBadRequest, "Content type not valid", nil)
+		return
+	}
+	extension := strings.Split(contentType, "/")[1]
+	fmt.Printf("%s, %s\n", contentType, extension)
+
+	rng := make([]byte, 32)
+	_, err = rand.Read(rng)
+	rngString := base64.RawURLEncoding.EncodeToString(rng)
+
+	filePath := filepath.Join(cfg.assetsRoot, rngString+"."+extension)
+	file, err := os.Create(filePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error creating file", err)
+		return
+	}
+	defer file.Close()
+
+	_, err = io.Copy(file, fileData)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error writing to file", err)
 		return
 	}
 
@@ -58,21 +87,15 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "unable to get metadata", err)
 		return
 	}
-	fmt.Println(metaData)
-	fmt.Println(userID)
 
 	if metaData.CreateVideoParams.UserID != userID {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized user", nil)
 		return
 	}
 
-	tn := thumbnail{
-		data:      imageData,
-		mediaType: contentType,
-	}
-
-	videoThumbnails[metaData.ID] = tn
-	newURL := "http://localhost:8091/api/thumbnails/" + metaData.ID.String()
+	newURL := "http://localhost:8091/" + filePath
+	fmt.Println("Thumbnail url is now:")
+	fmt.Println(newURL)
 	metaData.ThumbnailURL = &newURL
 
 	err = cfg.db.UpdateVideo(metaData)
