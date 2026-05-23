@@ -61,7 +61,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	extension := strings.Split(contentType, "/")[1]
-	fmt.Printf("%s, %s\n", contentType, extension)
 
 	rng := make([]byte, 32)
 	_, err = rand.Read(rng)
@@ -93,8 +92,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	newURL := "http://localhost:8091/" + filePath
-	fmt.Println("Thumbnail url is now:")
-	fmt.Println(newURL)
 	metaData.ThumbnailURL = &newURL
 
 	err = cfg.db.UpdateVideo(metaData)
